@@ -43,6 +43,7 @@
 
 %%-define(dbg(F,A), io:format((F),(A))).
 -define(dbg(F,A), ok).
+-define(dbg0(F,A), ok).
 -define(dbg1(F,A), io:format((F),(A))).
 
 %% Erlang is dynamically typed and lists may contain items of mixed types!!!
@@ -278,7 +279,7 @@ load_xref(Fd,Offset,Trailer,XRef,PDF) ->
 	    {XRef1,Trailer2};
 	Prev ->
 	    file:position(Fd, Prev),
-	    ?dbg1("Load xref from offset ~w\n", [Prev]),
+	    ?dbg0("Load xref from offset ~w\n", [Prev]),
 	    load_xref(Fd,Trailer2,XRef1,PDF)
     end.
 
@@ -308,7 +309,7 @@ load_xref_stream(Fd,Cs,N,Trailer,XRef,PDF) ->
 	    {XRef1, Trailer2};
 	Prev ->
 	    file:position(Fd, Prev),
-	    ?dbg1("Load xref from offset ~w\n", [Prev]),
+	    ?dbg0("Load xref from offset ~w\n", [Prev]),
 	    load_xref(Fd,Trailer2,XRef1,PDF)
     end.
 
@@ -385,7 +386,7 @@ load_xref_table(Fd,Cs,N,I,Trailer,XRef) ->
     end.
 
 add_xref(Ent, XRef) ->
-    ?dbg1("add xref entry = ~p\n", [Ent]),
+    ?dbg0("add xref entry = ~p\n", [Ent]),
     [Ent | XRef].
 
 load_xref_offset(Fd) ->
@@ -477,9 +478,9 @@ text_from_content(Content, PDF) ->
 	       is_list(Data) ->
 		    text_stream(Data)
 	    end;
-	Fs ->
+	_Fs ->
 	    ?dbg1("text_from_content ~p not decoded ~p remain\n",
-		  [Content,Fs]),
+		  [Content,_Fs]),
 	    []
     end.
 
@@ -560,10 +561,12 @@ date_items([{year,Y}]) -> {{Y,1,1},[]};
 date_items([{year,Y},{month,M}]) -> {{Y,M,1},[]};
 date_items([{year,Y},{month,M},{day,D}|Ds]) -> {{Y,M,D},Ds}.
 
+time_items([]) -> {{0,0,0}, []};
 time_items([{hour,H}]) -> {{H,0,0}, []};
 time_items([{hour,H},{minute,M}]) -> {{H,M,0},[]};
 time_items([{hour,H},{minute,M},{second,S}|Ds]) -> {{H,M,S},Ds}.
 
+zone_items([]) -> {0,[]};
 zone_items([{z,0}]) -> {0,[]};
 zone_items([{z,Z},{zh,H}]) -> {Z*50*H,[]};
 zone_items([{z,Z},{zh,H},{zm,M}|Ds]) -> {Z*(60*H+M),Ds}.
@@ -791,13 +794,13 @@ load_stream_data(Cs, Dict, Length) when is_integer(Length) ->
 
 %% parse command stream: [<obj>* <cmd>]*
 parse_seq_stream(Cs) ->
-    ?dbg1("parse_seq_stream: ~p\n", [Cs]),
+    ?dbg0("parse_seq_stream: ~p\n", [Cs]),
     parse_seq_stream_(Cs, []).
 
 parse_seq_stream_(Cs, A) ->
     case parse_args(Cs,[]) of
 	{Cmd, Args, Cs1} ->
-	    ?dbg1("command ~p\n", [{Cmd,Args}]),
+	    ?dbg0("command ~p\n", [{Cmd,Args}]),
 	    parse_seq_stream_(Cs1,[{Cmd,Args}|A]);
 	eof ->
 	    {lists:reverse(A),eof};
