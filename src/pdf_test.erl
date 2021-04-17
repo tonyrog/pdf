@@ -27,7 +27,7 @@ test1() ->
     print_obj(#{ a => 1, b => 1.0, c => "1.0", d => true }),
     print_obj(#{ a => #{ a=>1, b=> 2}}),
     %% streams / objects
-    print_obj([obj,12,1,"Brillig"]),
+    print_obj(?object(12,1,"Brillig")),
     print_obj(?objref(12,1)),
     ok.
 

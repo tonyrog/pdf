@@ -85,6 +85,9 @@
 	
 -type pdf() :: #{ pdf_objref() => pdf_indirect_object() }.
 
+-type pdf_tree() :: pdf_objref() |  %% leaf
+		    { pdf_objref(), [pdf_tree()]}.  %% node
+
 -include("pdf.hrl").
 
 -spec save(Filename::string(), PDF::pdf()) ->
@@ -116,7 +119,7 @@ write_trailer(Fd, Trailer, XRefOffset) ->
     file:write(Fd, [integer_to_list(XRefOffset),"\n"]),
     file:write(Fd, "%%EOF\n").
      
-write_obj_list(Fd, [Obj=[obj,N,G|_]|ObjList], XRef) ->
+write_obj_list(Fd, [Obj=?object(N,G,_)|ObjList], XRef) ->
     Offset = write_obj(Fd, Obj),
     write_obj_list(Fd, ObjList, [{Offset,N,G}|XRef]);
 write_obj_list(_Fd, [], XRef) ->
@@ -124,7 +127,7 @@ write_obj_list(_Fd, [], XRef) ->
 
 write_obj(Fd, Obj) ->
     {ok,Offset} = file:position(Fd, cur),
-    file:write(Fd, pdf:format_obj(Obj)),
+    file:write(Fd, format_obj(Obj)),
     Offset.
 
 write_xref(Fd, XRef) ->
@@ -230,7 +233,7 @@ load_seq_objects_(Fd, Cs, PDF) ->
 	    [obj,N,_G,_] = Obj,
 	    load_seq_objects_(Fd, Cs2, PDF1);
 	{?key(trailer), Cs1} ->
-	    Trailer = parse_dict(Cs1),
+	    {Trailer,_Cs2} = parse_dict(Cs1),
 	    PDF#{ trailer => Trailer }
     end.
     
@@ -403,6 +406,7 @@ find_xref_offset([_|Cs]) ->
     find_xref_offset(Cs);
 find_xref_offset([]) ->
     false.
+
 %%
 %% retrive pdf info and decode into "readable" form (if possible)
 %%
@@ -431,6 +435,8 @@ info_(Info) ->
 	get_date('ModDate', mod_date, Info) ++
 	get_name('Trapped', trapped, Info).
 
+%% Extract list of pages objects
+-spec pages(PDF::pdf()) -> [pdf_objref()].
 
 pages(PDF) ->
     Trailer = get_named_value(trailer, PDF, #{}),
@@ -441,16 +447,39 @@ pages(PDF) ->
     Kids      = get_named_object('Kids',PagesObj, PDF),
     array_to_list(Kids).
 
+%% Extract document tree object structure
+-spec document_tree(PDF::pdf()) -> pdf_tree().
+document_tree(PDF) ->
+    Trailer   = get_named_value(trailer, PDF, #{}),
+    RootRef   = maps:get('Root', Trailer),
+    RootObj   = get_object(RootRef, PDF),
+    PagesObj  = get_named_object('Pages', RootObj, PDF),
+    Kids      = get_named_object('Kids',PagesObj, PDF),
+    {RootRef,
+     lists:foldl(
+       fun(Page, Acc) ->
+	       PageObj = maps:get(Page, PDF),
+	       Contents =
+		   case get_named_value('Contents', PageObj, []) of
+		       Ref = ?objref(_N,_G) -> [Ref];
+		       RefList when is_tuple(RefList) -> array_to_list(RefList)
+		   end,
+	       [{Page,Contents}|Acc]
+       end, [], array_to_list(Kids))}.
+
 %% extract text from pages
+-spec text(PDF::pdf()) -> string().
+
 text(PDF) ->
     Pages = pages(PDF),
-    Text = lists:foldl(
+    Text = lists:foldr(
 	     fun(Page, Text) ->
 		     [text_from_page(Page, PDF) | Text]
 	     end, [], Pages),
     lists:flatten(Text).
 
-%% page number?
+%% extract text from page
+-spec text_from_page(Page::pdf_objref(), PDF::pdf()) -> string().
 text_from_page(Page, PDF) when ?is_objref(Page) ->
     PageObj = maps:get(Page, PDF),
     'Page'  = get_named_value('Type', PageObj),
@@ -501,6 +530,23 @@ text_stream([_|Commands]) ->
     text_stream(Commands);
 text_stream([]) ->
     [].
+
+get_object(N, PDF) when is_integer(N) ->
+    maps:get(?objref(N), PDF);
+get_object(Ref=?objref(_N,_G), PDF) ->
+    maps:get(Ref, PDF).
+
+
+get_object(N, G, PDF) when is_integer(N), is_integer(G) ->
+    maps:get(?objref(N,G), PDF);
+get_object(N, PDF, Default) when is_integer(N) ->
+    maps:get(?objref(N), PDF, Default);
+get_object(Ref=?objref(_N,_G), PDF, Default) ->
+    maps:get(Ref, PDF, Default).
+
+get_object(N, G, PDF, Default) when is_integer(N) ->
+    maps:get(?objref(N,G), PDF, Default).
+
 
 get_named_object(Name, Dict, PDF) ->
     case get_named_value(Name, Dict) of
@@ -1087,7 +1133,7 @@ format_obj([stream,Dict=#{},StreamData]) ->
      ?NL,<<"endstream">>,?NL];
 format_obj(?objref(N,G)) when is_integer(N),is_integer(G) ->
     [integer_to_list(N),?BL,integer_to_list(G),?BL,"R"];
-format_obj([obj,N,G,Obj]) when is_integer(N),is_integer(G) ->
+format_obj(?object(N,G,Obj)) when is_integer(N),is_integer(G) ->
     [integer_to_list(N),?BL,integer_to_list(G),?BL,<<"obj">>,?NL,
      format_obj(Obj),?NL,
      <<"endobj">>,?NL];
