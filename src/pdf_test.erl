@@ -93,9 +93,9 @@ test_doc1() ->
 test_lze_base85_0() ->
     Stream =
 <<"J..)6T`?p&<!J9%_[umg\"B7/Z7KNXbN'S+,*Q/&\"OLT'FLIDK#!n`$\"<Atdi`\\Vn%b%)&'cA*VnK\\CJY(sF>c!Jnl@RM]WM;jjH6Gnc75idkL5]+cPZKEBPWdR>FF(kj1_R%W_d&/jS!;iuad7h?[L-F$+]]0A3Ck*$I0KZ?;<)CJtqi65XbVc3\\n5ua:Q/=0$W<#N3U;H,MQKqfg1?:lUpR;6oN[C2E4ZNr8Udn.'p+?#X+1>0Kuk$bCDF/(3fL5]Oq)^kJZ!C2H1'TO]Rl?Q:&'<5&iP!$Rq;BXRecDN[IJB`,)o8XJOSJ9sDS]hQ;Rj@!ND)bD_q&C\\g:inYC%)&u#:u,M6Bm%IY!Kb1+\":aAa'S`ViJglLb8<W9k6Yl\\0McJQkDeLWdPN?9A'jX*al>iG1p&i;eVoK&juJHs9%;Xomop\"5KatWRT\"JQ#qYuL,JD?M$0QP)lKn06l1apKDC@\\qJ4B!!(5m+j.7F790m(Vj88l8Q:_CZ(Gm1%X\\N1&u!FKHMB~>">>,
-    Compressed = pdf:filter_ASCII85Decode(Stream),
-    pdf:filter_LZWDecode(Compressed).
-
+    {true,Compressed} = pdf:filter_decode('ASCII85Decode',#{},Stream),
+    {true,Data} = pdf:filter_decode('LZWDecode',#{},Compressed),
+    Data.
 
 %% Test compression
 test_lze_base85() ->
@@ -143,9 +143,9 @@ test_lze_base85() ->
 	   ],
     ?object(1, ?stream(Dict,Data)) = hd(List),
     { 'ASCII85Decode', 'LZWDecode' } = maps:get('Filter', Dict),
-    Compressed = pdf:filter_ASCII85Decode(Data),
-    pdf:filter_LZWDecode(Compressed).
-    
+
+    {_, Decoded} = pdf:decode_stream(Dict, Data),
+    Decoded.
 
 %% H.3 Hello world example 
 
@@ -195,6 +195,33 @@ test_hello_world() ->
 		    
 	],
     pdf:save("hello.pdf", PDF).
+
+
+test_hello_api() ->
+    PDF = pdf:new(),
+    {CatalogRef,PDF1} = pdf:add_catalog(PDF, ?null),
+    {PagesRef,PDF2}   = pdf:add_pages(PDF1, CatalogRef),
+    PDF2_1 = pdf:set_field(PDF2, CatalogRef, 'Pages', PagesRef),
+    {Page1Ref,PDF3}   = pdf:add_page(PDF2_1, PagesRef),
+    {StreamRef1,PDF4}  = pdf:add_object(PDF3, 
+					?stream(#{},
+						{text,
+						 [{"Tf",['F1',24]},
+						  {"Td",[100,100]},
+						  {"Tj",["Hello"]}
+						 ]})),
+    {StreamRef2,PDF5}  = pdf:add_object(PDF4, 
+					?stream(#{},
+						{text,
+						 [{"Tf",['F1',24]},
+						  {"Td",[100,200]},
+						  {"Tj",["World"]}
+						 ]})),
+    PDF6 = pdf:add_contents(PDF5, Page1Ref, StreamRef1),
+    PDF7 = pdf:add_contents(PDF6, Page1Ref, StreamRef2),
+    PDF7.
+
+
 
 erl_forms_object(N, Module) ->
     Forms = funny:extract_forms(Module),

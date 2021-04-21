@@ -15,6 +15,8 @@
 -define(objref(N), ['R',(N),0]).
 -define(objref(N,G), ['R',(N),(G)]).
 
+-define(freeref(N), ['F',(N),0]).
+-define(freeref(N,G), ['F',(N),(G)]).
 
 -define(object(N,Obj), [obj,(N),0,Obj]).
 -define(object(N,G,Obj), [obj,(N),(G),Obj]).
