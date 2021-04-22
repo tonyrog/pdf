@@ -47,11 +47,11 @@ test2() ->
 
 test3() ->
     Term = ?object(7,?stream(#{ 'Length' => ?objref(8)},
-			     {text,
-			      [{"Tf",['F1',12]},
-			       {"Td",[72,712]},
-			       {"Tj",["A stream with a indirect length"]}
-			      ]})),
+			     ["BT",
+			      {"Tf",['F1',12]},
+			      {"Td",[72,712]},
+			      {"Tj",["A stream with a indirect length"]},
+			      "ET"])),
     print_obj(Term).
 
 %% H.2 Minimal PDF FIle from 1.7 standard
@@ -178,16 +178,16 @@ test_hello_world() ->
 
 	 ?object(5,
 		 ?stream(#{ },
-			 {text,
-			  [{"Tf",['F1',24]},
-			   {"Td",[100,100]},
-			   {"Tj",["Hello World"]}
-			  ]})),
+			 ["BT",
+			  {"Tf",['F1',24]},
+			  {"Td",[100,100]},
+			  {"Tj",["Hello World"]},
+			  "ET"])),
 	 ?object(6,
 		 {'PDF','Text'}),
 	 ?object(7,
 		 #{ 'Type' => 'Font',
-		    'SubType' => 'Type1',
+		    'Subtype' => 'Type1',
 		    'Name' => 'F1',
 		    'BaseFont' => 'Helvetica',
 		    'Encoding' => 'MacRomanEncoding'
@@ -195,6 +195,178 @@ test_hello_world() ->
 		    
 	],
     pdf:save("hello.pdf", PDF).
+
+
+%% WTF example: 
+%% FORBIDDEN! 
+%% PLEASE COPY
+
+test_wtf() ->
+    PDF =
+	[
+	 ?object(1,
+		 #{ 'Type' => 'Catalog',
+		    'Outlines' => ?objref(2),
+		    'Pages' => ?objref(3) }),
+    
+	 ?object(2,
+		 #{ 'Type' => 'Outlines',
+		    'Count' => 0 }),
+
+	 ?object(3,
+		 #{ 'Type' => 'Pages',
+		    'Kids' => {?objref(4)},
+		    'Count' => 1
+		  }),
+
+	 ?object(4,
+		 #{ 'Type' => 'Page',
+		    'Parent' => ?objref(3),
+		    'MediaBox' => {0,0,612,792},
+		    'Contents' => ?objref(5),
+		    'Resources' => #{ 'ProcSet' => ?objref(6),
+				      'Font' => #{ 'F1' => ?objref(7),
+						   'F2' => ?objref(9)
+						 }}
+		  }),
+	 ?object(5,
+		 ?stream(#{ },
+			 ["BT",
+			  {"Td",[200,500]},
+			  {"Tf",['F1',24]},
+			  {"Tj",["FORBID"]},
+			  {"Tf",['F2',24]},
+			  {"Tj",["DEN! "]},
+			  "ET"])),
+	 ?object(6,
+		 {'PDF','Text'}),
+	 ?object(7,
+		 #{ 'Type' => 'Font',
+		    'Name' => 'F1',
+		    'Subtype' => 'Type1',
+		    'BaseFont' => 'Helvetica',
+		    'Encoding' => ?objref(8)
+		  }),
+	 ?object(8,
+		 #{ 'Type' => 'Encoding',
+		    %% 'BaseEncoding' => 'MacRomanEncoding',
+		    'Differences' =>
+			{ $F, 'P',
+			  $O, 'L',
+			  $R, 'E',
+			  $B, 'A',
+			  $I, 'S',
+			  $D, 'E'
+			}}),
+	 ?object(9,
+		 #{ 'Type' => 'Font',
+		    'Name' => 'F2',
+		    'Subtype' => 'Type1',
+		    'BaseFont' => 'Helvetica',
+		    'Encoding' => ?objref(10)
+		  }),
+	 ?object(10,
+		 #{ 'Type' => 'Encoding',
+		    'Differences' =>
+			{ $D, 'space',
+			  $E, 'C',
+			  $N, 'O',
+			  $!, 'P',
+			  $\s,'Y'
+			}})
+	],
+    pdf:save("copy.pdf", PDF).
+
+
+
+test_wtf_stm() ->
+    PDF =
+	[
+	 ?object(1,
+		 #{ 'Type' => 'Catalog',
+		    'Outlines' => ?objref(2),
+		    'Pages' => ?objref(3) }),
+    
+	 ?object(2,
+		 #{ 'Type' => 'Outlines',
+		    'Count' => 0 }),
+
+	 ?object(3,
+		 #{ 'Type' => 'Pages',
+		    'Kids' => {?objref(4)},
+		    'Count' => 1
+		  }),
+
+	 ?object(4,
+		 #{ 'Type' => 'Page',
+		    'Parent' => ?objref(3),
+		    'MediaBox' => {0,0,612,792},
+		    'Contents' => ?objref(5),
+		    'Resources' => #{ 'ProcSet' => ?objref(6),
+				      'Font' => #{ 'F1' => ?objref(7),
+						   'F2' => ?objref(8)
+						 }}
+		  }),
+
+	 ?object(5,
+		 ?stream(#{ },
+			 ["BT",
+			  {"Td",[200,500]},
+			  {"Tf",['F1',24]},
+			  {"Tj",["FORBID"]},
+			  {"Tf",['F2',24]},
+			  {"Tj",["DEN! "]},
+			  "ET"
+			 ])),
+	 ?object(6,
+		 {'PDF','Text'}),
+	 ?object(7,
+		 #{ 'Type' => 'Font',
+		    'Name' => 'F1',
+		    'Subtype' => 'Type1',
+		    'BaseFont' => 'Helvetica',
+		    'Encoding' => ?objref(10)
+		  }),
+	 ?object(8,
+		 #{ 'Type' => 'Font',
+		    'Name' => 'F2',
+		    'Subtype' => 'Type1',
+		    'BaseFont' => 'Helvetica',
+		    'Encoding' => ?objref(11)
+		  }),
+	 ?object(9,
+		 ?stream(#{ 'Type' => 'ObjStm' },
+			 [
+			  ?object(10,
+				  #{ 'Type' => 'Encoding',
+				     'Differences' =>
+					 { $F, 'P',
+					   $O, 'L',
+					   $R, 'E',
+					   $B, 'A',
+					   $I, 'S',
+					   $D, 'E'
+					 }}),
+			  ?object(11,
+				  #{ 'Type' => 'Encoding',
+				     'Differences' =>
+					 { $D, 'space',
+					   $E, 'C',
+					   $N, 'O',
+					   $!, 'P',
+					   $\s,'Y'
+					 }})
+			 ])),
+	 ?object(12,
+		 ?stream(#{ 'Type' => 'XRef',
+			    'Size' => 2,
+			    'W' => {1,1,1},
+			    'Index' => {10,2}
+			  },
+			 <<2,9,0,
+			   2,9,1>>))
+	],
+    pdf:save("copystm.pdf", PDF).
 
 
 test_hello_api() ->
@@ -205,29 +377,28 @@ test_hello_api() ->
     {Page1Ref,PDF3}   = pdf:add_page(PDF2_1, PagesRef),
     {StreamRef1,PDF4}  = pdf:add_object(PDF3, 
 					?stream(#{},
-						{text,
-						 [{"Tf",['F1',24]},
-						  {"Td",[100,100]},
-						  {"Tj",["Hello"]}
-						 ]})),
+						["BT",
+						 {"Tf",['F1',24]},
+						 {"Td",[100,100]},
+						 {"Tj",["Hello"]},
+						 "ET"])),
     {StreamRef2,PDF5}  = pdf:add_object(PDF4, 
 					?stream(#{},
-						{text,
-						 [{"Tf",['F1',24]},
-						  {"Td",[100,200]},
-						  {"Tj",["World"]}
-						 ]})),
+						["BT",
+						 {"Tf",['F1',24]},
+						 {"Td",[100,200]},
+						 {"Tj",["World"]},
+						 "ET"])),
     PDF6 = pdf:add_contents(PDF5, Page1Ref, StreamRef1),
     PDF7 = pdf:add_contents(PDF6, Page1Ref, StreamRef2),
     PDF7.
 
 
-
 erl_forms_object(N, Module) ->
     Forms = funny:extract_forms(Module),
     Binary = term_to_binary(Forms),
-    Compressed = pdf:filter_FlateEncode(Binary),
-    Encoded = pdf:filter_ASCII85Encode(Compressed),
+    Compressed = pdf:filter_encode('FlateDecode', Binary),
+    Encoded = pdf:filter_encode('ASCII85Encode', Compressed),
     ?object(N, ?stream(#{ 'Type' => 'ErlForms',
 			  'Filter' => {'ASCII85Decode', 'FlateDecode'},
 			  'Length' => byte_size(Encoded)
@@ -235,8 +406,8 @@ erl_forms_object(N, Module) ->
 
 erl_beam_object(N, Module) ->
     {pdf,Beam,File} = code:get_object_code(Module),
-    Compressed = pdf:filter_FlateEncode(Beam),
-    Encoded = pdf:filter_ASCII85Encode(Compressed),
+    Compressed = pdf:filter_encode('FlateDecode', Beam),
+    Encoded = pdf:filter_encode('ASCII85Decode', Compressed),
     ?object(N, ?stream(#{ 'Type' => 'Beam',
 			  'FileName' => File,
 			  'Filter' => {'ASCII85Decode', 'FlateDecode'},
@@ -273,16 +444,16 @@ test_erlforms() ->
 
 	 ?object(5,
 		 ?stream(#{ },
-			 {text,
-			  [{"Tf",['F1',24]},
-			   {"Td",[100,100]},
-			   {"Tj",["Erlang forms"]}
-			  ]})),
+			 ["BT",
+			  {"Tf",['F1',24]},
+			  {"Td",[100,100]},
+			  {"Tj",["Erlang forms"]},
+			  "ET"])),
 	 ?object(6,
 		 {'PDF','Text'}),
 	 ?object(7,
 		 #{ 'Type' => 'Font',
-		    'SubType' => 'Type1',
+		    'Subtype' => 'Type1',
 		    'Name' => 'F1',
 		    'BaseFont' => 'Helvetica',
 		    'Encoding' => 'MacRomanEncoding'
@@ -323,26 +494,25 @@ test_graphics() ->
 		  }),
 	 ?object(5,
 		 ?stream(#{ },
-			 {graphics,
-			  [{"m",[150,250]},
-			   {"l",[150,350]},
-			   "S",
-			   {"w",[4]},
-			   {"d",[{4,6},0]},
-			   {"m",[150,250]},
-			   {"l",[400,250]},
-			   "S",
-			   {"d",[{},0]},
-			   {"w",[1]},
-			   {"RG",[1.0,0.0,0.0]},
-			   {"rg",[0.5,0.75,1.0]},
-			   {"re",[200,300,50,75]},
-			   "B",
-			   {"RG",[0.5,0.1,0.3]},
-			   {"g", [0.7]},
-			   {"m", [300,300]},
-			   {"c", [300,400,400,400,400,300]},
-			   "b"]})),
+			 [{"m",[150,250]},
+			  {"l",[150,350]},
+			  "S",
+			  {"w",[4]},
+			  {"d",[{4,6},0]},
+			  {"m",[150,250]},
+			  {"l",[400,250]},
+			  "S",
+			  {"d",[{},0]},
+			  {"w",[1]},
+			  {"RG",[1.0,0.0,0.0]},
+			  {"rg",[0.5,0.75,1.0]},
+			  {"re",[200,300,50,75]},
+			  "B",
+			  {"RG",[0.5,0.1,0.3]},
+			  {"g", [0.7]},
+			  {"m", [300,300]},
+			  {"c", [300,400,400,400,400,300]},
+			  "b"])),
 	 ?object(6,
 		 {'PDF'})
 		    
@@ -373,12 +543,12 @@ test_text_doc(Text) ->
 				  'Font' => #{ 'F1' => ?objref(7) }}
 	      }),
      ?object(5,
-	     ?stream(#{ }, {text, Text})),
+	     ?stream(#{ }, ["BT"]++Text++["ET"])),
      ?object(6,
 	     {'PDF','Text'}),
      ?object(7,
 	     #{ 'Type' => 'Font',
-		'SubType' => 'Type1',
+		'Subtype' => 'Type1',
 		'Name' => 'F1',
 		'BaseFont' => 'Helvetica',
 		'Encoding' => 'MacRomanEncoding'
@@ -419,14 +589,14 @@ test_filter() ->
 test_filter_ASCIIHex(String) ->
     E1 = pdf:filter_ASCIIHexEncode(String),
     %% fixme: inject blank in E1!
-    D1 = pdf:filter_ASCIIHexDecode(E1),
+    {true,D1} = pdf:filter_decode('ASCIIHexDecode', #{}, E1),
     D1 = iolist_to_binary(String),
     ok.
 
 test_filter_ASCII85(String) ->
     E1 = pdf:filter_ASCII85Encode(String),
     %% fixme: inject blank in E1!
-    D1 = pdf:filter_ASCII85Decode(E1),
+    {true,D1} = pdf:filter_decode('ASCII85Decode', #{}, E1),
     D1 = iolist_to_binary(String),
     ok.
 

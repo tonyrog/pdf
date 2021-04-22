@@ -8,7 +8,8 @@
 -module(pdf).
 
 -export([save/2]).
--export([load/1]).
+-export([load/1, load/2]).
+-export([unpack/1]).
 -export([info/1]).
 -export([new/0]).
 -export([add_object/1]).
@@ -230,12 +231,12 @@ save(Filename, PDF) ->
     case file:open(Filename, [write]) of
 	{ok,Fd} ->
 	    write_header(Fd, ?PDF_VERSION),
-	    XRef = write_obj_list(Fd, PDF, []),
+	    {XRef,XPrev} = write_obj_list(Fd, PDF, undefined, []),
 	    XRefOffset = write_xref(Fd,XRef),
 	    [obj,RootN,RootG|_] = hd(PDF),
 	    Trailer = #{ 'Size' => length(PDF),
 			 'Root' => ?objref(RootN,RootG) },
-	    write_trailer(Fd, Trailer, XRefOffset),
+	    write_trailer(Fd, Trailer, XPrev, XRefOffset),
 	    file:close(Fd);
 	Error ->
 	    Error
@@ -245,18 +246,29 @@ write_header(Fd, {Major,Minor}) ->
     ok = file:write(Fd, ["%PDF-", integer_to_list(Major),".",
 			 integer_to_list(Minor),"\n"]).
 
-write_trailer(Fd, Trailer, XRefOffset) ->
+write_trailer(Fd, Trailer, Prev, XRefOffset) ->
     file:write(Fd, "trailer\n"),
-    write_obj(Fd, Trailer),
+    if Prev =:= undefined ->
+	    write_obj(Fd, Trailer);
+       true ->
+	    write_obj(Fd, Trailer#{ 'Prev' => Prev })
+    end,
     file:write(Fd, "\nstartxref\n"),
     file:write(Fd, [integer_to_list(XRefOffset),"\n"]),
     file:write(Fd, "%%EOF\n").
-     
-write_obj_list(Fd, [Obj=?object(N,G,_)|ObjList], XRef) ->
+
+write_obj_list(Fd,[Obj=?object(N,G,?stream(Dict=#{ 'Type' := 'XRef'},Data))|
+		   ObjList], XPrev, XRef) ->
+    Obj1 = if XPrev =:= undefined -> Obj;
+	      true -> ?object(N,G,?stream(Dict#{ 'Prev' => XPrev },Data))
+	   end,
+    Offset = write_obj(Fd, Obj1),
+    write_obj_list(Fd, ObjList, Offset, [{Offset,N,G}|XRef]);
+write_obj_list(Fd, [Obj=?object(N,G,_)|ObjList],XPrev,XRef) ->
     Offset = write_obj(Fd, Obj),
-    write_obj_list(Fd, ObjList, [{Offset,N,G}|XRef]);
-write_obj_list(_Fd, [], XRef) ->
-    lists:keysort(2,XRef).
+    write_obj_list(Fd, ObjList,XPrev,[{Offset,N,G}|XRef]);
+write_obj_list(_Fd, [],XPrev,XRef) ->
+    {lists:keysort(2,XRef),XPrev}.
 
 write_obj(Fd, Obj) ->
     {ok,Offset} = file:position(Fd, cur),
@@ -294,9 +306,12 @@ get_section(XRef, _N, Es) ->
 -spec load(Filename::string()) -> pdf() | {error,Reason::term()}.
 
 load(Filename) ->
+    load(Filename, #{ load_objects => true }).
+
+load(Filename,Options) ->
     case file:open(Filename, [read]) of
 	{ok,Fd} ->
-	    try load_(Fd, Filename) of
+	    try load_(Fd, Filename, Options) of
 		PDF -> PDF
 	    after
 		file:close(Fd)
@@ -305,7 +320,7 @@ load(Filename) ->
 	    Error
     end.
 
-load_(Fd, Filename) ->
+load_(Fd, Filename, Options) ->
     %% check magic and read version
     Cs = get_char_fd_fun(Fd),
     {Magic,Cs1} = get_data(Cs,10),
@@ -327,22 +342,27 @@ load_(Fd, Filename) ->
 			 <<_:BOffs/binary,C1,C2,C3,C4,_/binary>> ->
 			     ((C1 band C2 band C3 band C4) band 16#80)=:=16#80
 		     end,
-	    Info = #{ version => Vsn,
-		      filename => Filename,
-		      eol => EOL,
-		      binary => Binary },
+	    FInfo = #{ version => Vsn,
+		       filename => Filename,
+		       eol => EOL,
+		       binary => Binary },
 	    case load_xref_offset(Fd) of
 		false ->
 		    {ok,_} = file:position(Fd, Offset0),
-		    load_seq_objects(Fd, #{ info => Info });
+		    load_seq_objects(Fd, #{ '$Finfo' => FInfo });
 		{ok,Offset} ->
-		    PDF0 = #{ info => Info,
-			      '$XRefOffset' => Offset, %% main offset
+		    PDF0 = #{ '$FInfo' => FInfo,
+			      '$XRefOffset' => Offset,
 			      '$XRef' => #{} },
 		    Trailer0 = #{},
 		    {Trailer1,PDF1} = load_xref(Fd,Offset,Trailer0,PDF0),
 		    PDF2 = set_trailer(PDF1, Trailer1),
-		    load_objects(Fd, PDF2)
+		    case maps:get(load_objects, Options, false) of
+			false ->
+			    PDF2;
+			true ->
+			    load_objects(Fd, PDF2)
+		    end
 	    end;
 	_->
 	    {error, bad_magic}
@@ -374,7 +394,7 @@ find_xref_offset(<<>>) ->
     false.
 
 
-%% Load when xref table is not found
+%% Load when xref table is not found, build $XRef? 
 load_seq_objects(Fd, PDF) ->
     Read = get_char_fd_fun(Fd),
     load_seq_objects_(Fd, Read, PDF).
@@ -395,13 +415,7 @@ load_seq_objects_(Fd, Cs, PDF) ->
 load_objects(Fd, PDF) ->
     load_objects(Fd, maps:to_list(maps:get('$XRef',PDF)), PDF).
     
-load_objects(Fd, [{Ref=?objref(_N,_G),Offset}|XRef], PDF) 
-  when is_integer(Offset) ->
-    ?dbg("load object ~p = ~w\n", [Ref,Offset]),
-    {_Obj,PDF1} = load_object(Fd, Ref, PDF),
-    load_objects(Fd, XRef, PDF1);
-load_objects(Fd, [{Ref=?objref(_N,_G),{_Pn,_Pi}}|XRef], PDF) ->
-    ?dbg("load object stream ~p = ~w\n", [Ref,{_Pn,_Pi}]),
+load_objects(Fd, [{Ref=?objref(_N,_G),_}|XRef], PDF) ->
     {_Obj,PDF1} = load_object(Fd, Ref, PDF),
     load_objects(Fd, XRef, PDF1);
 load_objects(Fd, [{?freeref(_N,_G),_Offset}|XRef], PDF) ->
@@ -593,6 +607,100 @@ add_xref_entry(Key, Value, XRef) ->
     XRef#{ Key => Value }.
 
 %%
+%% Unpack pdf into a file directory, for extracting,
+%% debugging and as a tool to pack pdf's
+%%
+unpack(Filename) ->
+    Ext = filename:extension(Filename),
+    Dir = filename:basename(Filename, Ext),
+    case file:make_dir(Dir) of
+	ok ->
+	    case file:open(Filename, [read]) of
+		{ok,Fd} ->
+		    try load_(Fd, Filename, #{ load_objects => false}) of
+			PDF ->
+			    unpack_objects(Fd, Dir, PDF)
+		    after
+			file:close(Fd)
+		    end;
+		Error ->
+		    Error
+	    end;
+	Error -> Error
+    end.
+
+unpack_objects(Fd, Dir, PDF) ->
+    XRef = maps:get('$XRef',PDF),
+    XRefList = maps:to_list(XRef),
+    PDF1 =
+	lists:foldl(
+	  fun({Ref=?objref(_,_G),_},PDFi) ->
+		  {Obj,PDFj} = load_object(Fd, Ref, PDFi),
+		  unpack_object(Dir, Obj),
+		  PDFj;
+	     (_, PDFi) ->
+		  PDFi
+	  end, PDF, XRefList),
+    file:write_file(filename:join(Dir,"trailer"),
+		    format_dict(maps:get('$Trailer', PDF))),
+    file:write_file(filename:join(Dir,"xref"),
+		    [[format_xref_entry(X),$\n] || X <- XRefList]),
+    PDF1.
+
+format_xref_entry({Ref=?objref(_,_),Offset}) when is_integer(Offset) ->
+    [format_obj(Ref)," ",integer_to_list(Offset)];
+format_xref_entry({Ref=?objref(_,_),{Pn,Pi}}) ->
+    [format_obj(Ref)," ", integer_to_list(Pn),":",integer_to_list(Pi)];
+format_xref_entry({Ref=?freeref(_,_),Next}) ->
+    [format_obj(Ref)," ", integer_to_list(Next)].
+
+unpack_object(Dir, [obj,N,G,[stream,Dict,Data]]) ->
+    Node = integer_to_list(N) ++ "." ++ integer_to_list(G),
+    file:write_file(filename:join(Dir, Node), format_dict(Dict)),
+    if is_binary(Data) ->
+	    file:write_file(filename:join(Dir,Node++".stream"), Data);
+       true ->
+	    file:write_file(filename:join(Dir,Node++".stream"),
+			    format_stream_obj(Data))
+    end,
+    Subtype = maps:get('Subtype', Dict, undefined),
+    Filter  = maps:get('Filter',Dict, {}),
+    ColorSpace = maps:get('ColorSpace',Dict, undefined),
+    if Filter =:= {},
+       Subtype =:= 'Image',
+       ColorSpace =:= 'DeviceRGB' ->
+	    unpack_png_image(filename:join(Dir,Node++".png"), Dict, Data);
+       true ->
+	    %% ignore, not handled (yet)
+	    ok
+    end;
+unpack_object(Dir, [obj,N,G,Obj]) ->
+    Node = integer_to_list(N) ++ "." ++ integer_to_list(G),
+    file:write_file(filename:join(Dir, Node), format_obj(Obj)).
+
+unpack_png_image(Filename, Dict, Data) ->
+    %% check current assumptions
+    'DeviceRGB' = maps:get('ColorSpace', Dict),
+    8 = maps:get('BitsPerComponent', Dict),
+
+    %% save as data as PNG assume R/G/B 24 bit format
+    Width = maps:get('Width', Dict, 0),
+    Height = maps:get('Height', Dict, 0),
+    Format = rgb,
+    PixelData = epx_image_png:format_pixel_data(Data, Width*3),
+    PngData = epx_image_png:format_data(PixelData,Width,Height,Format),
+    file:write_file(Filename, PngData).
+
+%% node name must be a stream node with DCT encoded stream data
+%% debug function
+dct_unpack(NodeName) ->
+    {ok,DictData} = file:read_file(NodeName),
+    {ok,Data} = file:read_file(NodeName++".stream"),
+    Dict = parse_dict(DictData),
+    RgbData = filter_DCTDecode(Data,Dict),
+    unpack_png_image(NodeName ++ ".png", Dict, RgbData).
+
+%%
 %% retrive pdf info and decode into "readable" form (if possible)
 %%
 -spec info(PDF::pdf()) -> [{Key::atom(), Value::term()}].
@@ -687,8 +795,8 @@ ascii(Text) ->
 text_from_content(Content, PDF) ->
     StreamObj = maps:get(Content, PDF),
     [obj,_N,_G,[stream,Dict,Data]] = StreamObj,
-    case maps:get('Filter',Dict,[]) of
-	[] ->
+    case maps:get('Filter',Dict, {}) of
+	{} ->
 	    if is_binary(Data) ->
 		    {Text,_} = parse_seq_stream(binary_to_list(Data)),
 		    text_stream(Text);
@@ -1372,6 +1480,8 @@ format_obj(X) when is_float(X) -> format_float(X);
 format_obj(X) when is_boolean(X) -> format_boolean(X);
 format_obj(X) when is_atom(X) -> format_name(X);
 format_obj(?null) -> "null";
+format_obj([stream,Dict=#{'Type':='ObjStm'},StreamData]) ->
+    format_objstm(Dict, StreamData);
 format_obj([stream,Dict=#{},StreamData]) ->
     Data = if is_binary(StreamData) ->
 		   StreamData;
@@ -1385,9 +1495,11 @@ format_obj([stream,Dict=#{},StreamData]) ->
     [format_dict(Dict1),
      ?NL,<<"stream">>,?NL,
      Data,
-     ?NL,<<"endstream">>,?NL];
+     ?NL,<<"endstream">>];
 format_obj(?objref(N,G)) when is_integer(N),is_integer(G) ->
     [integer_to_list(N),?BL,integer_to_list(G),?BL,"R"];
+format_obj(?freeref(N,G)) when is_integer(N),is_integer(G) -> %% not PDF spec
+    [integer_to_list(N),?BL,integer_to_list(G),?BL,"F"];
 format_obj(?object(N,G,Obj)) when is_integer(N),is_integer(G) ->
     [integer_to_list(N),?BL,integer_to_list(G),?BL,<<"obj">>,?NL,
      format_obj(Obj),?NL,
@@ -1396,6 +1508,31 @@ format_obj(X) when is_list(X) -> format_string(X);
 format_obj(X) when is_binary(X) -> format_hex_string(X);
 format_obj(X) when is_tuple(X) -> format_array(X);
 format_obj(X) when is_map(X) -> format_dict(X).
+
+format_objstm(Dict, StreamData) ->
+    {_,RevStm} =
+	lists:foldl(
+	  fun([obj,Num,0,Obj], {Offset,Acc}) ->
+		  Bin = iolist_to_binary(format_obj(Obj)),
+		  Size = byte_size(Bin),
+		  {Offset+Size, [{Num,Offset,Bin}|Acc]}
+	  end, {0, []}, StreamData),
+    Stm = lists:reverse(RevStm),
+    Header = [[[?BL,integer_to_list(Num),?BL,integer_to_list(Offset)] ||
+		  {Num,Offset,_} <- Stm], ?NL],
+    <<?BL,BinHeader/binary>> = iolist_to_binary(Header),
+
+    Stream = iolist_to_binary([BinHeader,
+			       [BinObj || {_,_,BinObj} <- Stm ]]),
+    Dict1 = Dict#{ 'N' => length(StreamData),
+		   'Length' => byte_size(Stream),
+		   'First' => byte_size(BinHeader) },
+    [format_dict(Dict1), 
+     [?NL,<<"stream">>,?NL,
+      Stream,
+      ?NL,<<"endstream">>]].
+
+
 
 %% Param to Tr render!
 -define(TEXT_FILL, 0).
@@ -1408,14 +1545,10 @@ format_obj(X) when is_map(X) -> format_dict(X).
 -define(TEXT_CLIPPING, 7).
 
 %% format text operators
-format_stream_obj({text,List}) ->
-    ["BT",?NL,[[?BL,text_operator(Op)] || Op <- List],?NL,"ET",?NL];
+format_stream_obj(List) when is_list(List) ->
+    lists:join(?NL, [format_command(Cmd) || Cmd <- List]).
 
-format_stream_obj({graphics,List}) ->
-    [[[?BL,graphics_operator(Op)] || Op <- List],?NL].
-
-%% Fixme: give nice name for the various operators
-%% and fall back to the general scheme with internal variants
+%% NOT USED rigt now 
 text_operator(Op) ->
     case Op of
 	{"Td",[Tx,Ty]} ->
@@ -1460,21 +1593,17 @@ text_operator(Op) ->
 	    [format_list(Operands),?BL,Name]
     end.
 
-graphics_operator(Op) ->
-    case Op of
+format_command(Cmd) ->
+    case Cmd of
 	Name when is_list(Name) ->
-	    atom_to_list(Name);
+	    Name;
 	{Name,Operands} when is_list(Name) ->
-	    %% fixme warning...
 	    [format_list(Operands),?BL,Name]
     end.
 
 format_list(Ts) ->
-    format_list(Ts,$\s).
+    lists:join(?BL, [ format_obj(T) || T <- Ts ]).
 
-format_list([T],_Sep) -> format_obj(T);
-format_list([T|Ts],Sep) -> [format_obj(T),Sep | format_list(Ts,Sep)];
-format_list([],_Sep) -> [].
 
 format_number(X) when is_integer(X) -> format_int(X);
 format_number(X) when is_float(X) -> format_float(X).
@@ -1606,6 +1735,8 @@ filter_decode('FlateDecode',Dict, Data) ->
     filter_FlateDecode(Data,Dict);
 filter_decode('LZWDecode',Dict, Data) ->
     filter_LZWDecode(Data,Dict);
+filter_decode('DCTDecode',Dict, Data) ->
+    filter_DCTDecode(Data,Dict);
 filter_decode(_Codec, _Dict, _Data) ->
     ?dbg1("filter_decode codec=~p not implemented (yet)\n", [_Codec]),
     {false, _Data}.
@@ -1740,6 +1871,17 @@ filter_LZWEncode(Data) ->
 filter_LZWDecode(Data,_Dict) ->
     %% Fixme parameters
     {true,epx_lzw:decompress(Data)}.
+
+filter_DCTDecode(Data,Dict) ->
+    {ok,Image} = epx_image_jpeg:read_info(Data),
+    [Pixmap] = epx_image:pixmaps(Image),
+    Width = maps:get('Width', Dict, epx:pixmap_info(Pixmap, width)),
+    Height = maps:get('Height', Dict, epx:pixmap_info(Pixmap, height)),
+    PixelData = epx:pixmap_get_pixels(Pixmap, 0, 0, Width, Height),
+    {true,PixelData}.
+
+filter_DCTEncode(Data) ->
+    {false, Data}.
 
 filter_FlateEncode(Data) ->
     %% add pred
